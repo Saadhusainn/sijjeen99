@@ -13,43 +13,35 @@ jobs:
         with:
           token: ${{ secrets.GH_PAT }}
 
-      - name: Download PDF with custom name
+      - name: Download PDF
         run: |
-          # Create pdfs directory
           mkdir -p pdfs
-          
-          # Configure git
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@users.noreply.github.com"
-          
-          # PULL and get latest state
           git pull --rebase
           
-          # Clean filename
           CLEAN_FILENAME="${{ github.event.client_payload.file_name }}"
           PDF_FILENAME="pdfs/${CLEAN_FILENAME}"
           
+          echo "Downloading from: ${{ github.event.client_payload.pdf_url }}"
           echo "Saving as: $PDF_FILENAME"
           
-          # Download PDF
+          # Download PDF (works for both Telegram files and direct links)
           curl -L --progress-bar "${{ github.event.client_payload.pdf_url }}" -o "$PDF_FILENAME"
           
           if [ -f "$PDF_FILENAME" ]; then
             echo "✅ PDF downloaded successfully"
-            
-            # Add, commit and push
             git add .
             git commit -m "Add PDF: $CLEAN_FILENAME"
             git pull --rebase
             git push
-            
             echo "✅ PDF committed successfully"
           else
             echo "❌ Failed to download PDF"
             exit 1
           fi
 
-      - name: Send Telegram notification
+      - name: Send completion notification
         run: |
           CHAT_ID="${{ github.event.client_payload.chat_id }}"
           FILENAME="${{ github.event.client_payload.file_name }}"
@@ -57,6 +49,6 @@ jobs:
           if [ -n "$CHAT_ID" ]; then
             curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
               -d "chat_id=$CHAT_ID" \
-              -d "text=✅ **Upload Complete!**\n\n• File: $FILENAME\n• Status: Successfully uploaded to GitHub!\n\n📁 View: https://github.com/${{ github.repository }}/tree/main/pdfs" \
+              -d "text=✅ **Upload Complete!**\n\n• File: $FILENAME\n• Status: Successfully uploaded!\n\n📁 View: https://github.com/${{ github.repository }}/tree/main/pdfs" \
               -d "parse_mode=Markdown"
           fi
