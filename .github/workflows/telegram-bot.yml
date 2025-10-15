@@ -1,0 +1,28 @@
+name: Telegram PDF to GitHub
+
+on:
+  repository_dispatch:
+    types: [telegram-pdf]
+
+jobs:
+  process-pdf:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download and commit PDF
+        run: |
+          # Download PDF from Telegram
+          curl -L "$PDF_URL" -o "pdfs/$(date +%Y%m%d_%H%M%S).pdf"
+          
+          # Configure git
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+          # Commit and push
+          git add pdfs/
+          git commit -m "Add PDF from Telegram: $(date)"
+          git push
+        env:
+          PDF_URL: ${{ github.event.client_payload.pdf_url }}
