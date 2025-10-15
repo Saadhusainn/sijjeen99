@@ -27,7 +27,7 @@ jobs:
           fi
           
           # Format as 3-digit number (000, 001, 002, etc.)
-          FORMATTED_NUMBER=$(printf "%04d" $NEXT_NUMBER)
+          FORMATTED_NUMBER=$(printf "%03d" $NEXT_NUMBER)
           PDF_FILENAME="pdfs/${FORMATTED_NUMBER}.pdf"
           
           echo "Next file number: $FORMATTED_NUMBER"
