@@ -13,7 +13,7 @@ jobs:
         with:
           token: ${{ secrets.GH_PAT }}
 
-      - name: Download PDF with sequential numbering
+      - name: Download PDF with custom name
         run: |
           # Create pdfs directory
           mkdir -p pdfs
@@ -25,53 +25,38 @@ jobs:
           # PULL and get latest state
           git pull --rebase
           
-          # Find next available number safely (force base-10 to avoid octal issues)
-          MAX_RETRIES=5
-          RETRY_COUNT=0
+          # Clean filename
+          CLEAN_FILENAME="${{ github.event.client_payload.file_name }}"
+          PDF_FILENAME="pdfs/${CLEAN_FILENAME}"
           
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            # Get current highest number - FORCE BASE-10
-            LAST_NUMBER=$(find pdfs -name "*.pdf" | grep -oE '[0-9]+' | sort -n | tail -1)
-            if [ -z "$LAST_NUMBER" ]; then
-              NEXT_NUMBER=0
-            else
-              # Force base-10 arithmetic to avoid octal issues
-              NEXT_NUMBER=$((10#$LAST_NUMBER + 1))
-            fi
-            
-            FORMATTED_NUMBER=$(printf "%04d" $NEXT_NUMBER)
-            PDF_FILENAME="pdfs/${FORMATTED_NUMBER}.pdf"
-            
-            echo "Current highest number: $LAST_NUMBER"
-            echo "Next file number: $FORMATTED_NUMBER"
-            echo "Saving as: $PDF_FILENAME"
-            
-            # Download PDF
-            curl -L --progress-bar "${{ github.event.client_payload.pdf_url }}" -o "$PDF_FILENAME"
-            
-            if [ -f "$PDF_FILENAME" ]; then
-              # Try to commit
-              git add .
-              git commit -m "Add PDF: ${FORMATTED_NUMBER}.pdf"
-              
-              if git push; then
-                echo "✅ Successfully uploaded as ${FORMATTED_NUMBER}.pdf"
-                break
-              else
-                echo "⚠️ Push failed, retrying..."
-                git pull --rebase
-                RETRY_COUNT=$((RETRY_COUNT + 1))
-                # Remove the failed file
-                rm -f "$PDF_FILENAME"
-                git reset --hard HEAD^
-              fi
-            else
-              echo "❌ Download failed"
-              exit 1
-            fi
-          done
+          echo "Saving as: $PDF_FILENAME"
           
-          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-            echo "❌ Failed after $MAX_RETRIES attempts"
+          # Download PDF
+          curl -L --progress-bar "${{ github.event.client_payload.pdf_url }}" -o "$PDF_FILENAME"
+          
+          if [ -f "$PDF_FILENAME" ]; then
+            echo "✅ PDF downloaded successfully"
+            
+            # Add, commit and push
+            git add .
+            git commit -m "Add PDF: $CLEAN_FILENAME"
+            git pull --rebase
+            git push
+            
+            echo "✅ PDF committed successfully"
+          else
+            echo "❌ Failed to download PDF"
             exit 1
+          fi
+
+      - name: Send Telegram notification
+        run: |
+          CHAT_ID="${{ github.event.client_payload.chat_id }}"
+          FILENAME="${{ github.event.client_payload.file_name }}"
+          
+          if [ -n "$CHAT_ID" ]; then
+            curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+              -d "chat_id=$CHAT_ID" \
+              -d "text=✅ **Upload Complete!**\n\n• File: $FILENAME\n• Status: Successfully uploaded to GitHub!\n\n📁 View: https://github.com/${{ github.repository }}/tree/main/pdfs" \
+              -d "parse_mode=Markdown"
           fi
