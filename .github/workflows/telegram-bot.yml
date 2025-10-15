@@ -11,18 +11,39 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download and commit PDF
+      - name: Download PDF from Telegram
         run: |
-          # Download PDF from Telegram
-          curl -L "$PDF_URL" -o "pdfs/$(date +%Y%m%d_%H%M%S).pdf"
+          # Create pdfs directory
+          mkdir -p pdfs
           
-          # Configure git
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          # Create safe filename (remove special characters)
+          SAFE_FILENAME=$(echo "${{ github.event.client_payload.file_name }}" | tr -cd 'a-zA-Z0-9._-')
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          PDF_FILENAME="pdfs/${TIMESTAMP}_${SAFE_FILENAME}"
           
-          # Commit and push
-          git add pdfs/
-          git commit -m "Add PDF from Telegram: $(date)"
-          git push
-        env:
-          PDF_URL: ${{ github.event.client_payload.pdf_url }}
+          echo "Downloading PDF: ${{ github.event.client_payload.file_name }}"
+          echo "Safe filename: $SAFE_FILENAME"
+          echo "Saving as: $PDF_FILENAME"
+          
+          # Download the PDF with progress
+          curl -L --progress-bar "${{ github.event.client_payload.pdf_url }}" -o "$PDF_FILENAME"
+          
+          # Check if download was successful
+          if [ -f "$PDF_FILENAME" ]; then
+            echo "✅ PDF downloaded successfully: $(ls -la "$PDF_FILENAME")"
+            
+            # Configure git
+            git config user.name "GitHub Actions Bot"
+            git config user.email "actions@users.noreply.github.com"
+            
+            # Add, commit and push
+            git add .
+            git commit -m "Add PDF: $SAFE_FILENAME"
+            git push
+            
+            echo "✅ PDF committed to repository"
+          else
+            echo "❌ Failed to download PDF"
+            ls -la pdfs/
+            exit 1
+          fi
