@@ -13,42 +13,136 @@ jobs:
         with:
           token: ${{ secrets.GH_PAT }}
 
-      - name: Download PDF
+      - name: Process Upload
+        id: upload
         run: |
           mkdir -p pdfs
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@users.noreply.github.com"
           git pull --rebase
           
+          IS_ZIP="${{ github.event.client_payload.is_zip }}"
+          FOLDER_NAME="${{ github.event.client_payload.folder_name }}"
           CLEAN_FILENAME="${{ github.event.client_payload.file_name }}"
-          PDF_FILENAME="pdfs/${CLEAN_FILENAME}"
+          DOWNLOAD_URL="${{ github.event.client_payload.pdf_url }}"
           
-          echo "Downloading from: ${{ github.event.client_payload.pdf_url }}"
-          echo "Saving as: $PDF_FILENAME"
+          echo "Processing upload..."
+          echo "Is ZIP: $IS_ZIP"
+          echo "Folder Name: $FOLDER_NAME"
+          echo "File Name: $CLEAN_FILENAME"
+          echo "Download URL: $DOWNLOAD_URL"
           
-          # Download PDF (works for both Telegram files and direct links)
-          curl -L --progress-bar "${{ github.event.client_payload.pdf_url }}" -o "$PDF_FILENAME"
-          
-          if [ -f "$PDF_FILENAME" ]; then
-            echo "✅ PDF downloaded successfully"
-            git add .
-            git commit -m "Add PDF: $CLEAN_FILENAME"
-            git pull --rebase
-            git push
-            echo "✅ PDF committed successfully"
+          if [ "$IS_ZIP" = "true" ]; then
+            # Handle ZIP file extraction
+            ZIP_FILENAME="temp_archive.zip"
+            echo "Downloading and extracting ZIP file..."
+            
+            # Download ZIP
+            curl -L --progress-bar "$DOWNLOAD_URL" -o "$ZIP_FILENAME"
+            
+            if [ -f "$ZIP_FILENAME" ]; then
+              # Create folder for extraction
+              if [ -n "$FOLDER_NAME" ]; then
+                EXTRACT_DIR="pdfs/$FOLDER_NAME"
+              else
+                EXTRACT_DIR="pdfs/extracted_$(date +%Y%m%d_%H%M%S)"
+              fi
+              
+              mkdir -p "$EXTRACT_DIR"
+              
+              # Extract ZIP
+              unzip -q "$ZIP_FILENAME" -d "$EXTRACT_DIR" || true
+              
+              # Count PDF files extracted
+              PDF_COUNT=$(find "$EXTRACT_DIR" -name "*.pdf" | wc -l)
+              
+              if [ $PDF_COUNT -gt 0 ]; then
+                echo "✅ Extracted $PDF_COUNT PDF files to $EXTRACT_DIR"
+                
+                git add .
+                git commit -m "Add PDFs from ZIP: $CLEAN_FILENAME (${PDF_COUNT} files)"
+                git pull --rebase
+                
+                if git push; then
+                  echo "UPLOAD_SUCCESS=true" >> $GITHUB_ENV
+                  echo "UPLOAD_MESSAGE=Extracted $PDF_COUNT PDF files to folder: $FOLDER_NAME" >> $GITHUB_ENV
+                  echo "FILE_COUNT=$PDF_COUNT" >> $GITHUB_ENV
+                  echo "FOLDER_NAME=$FOLDER_NAME" >> $GITHUB_ENV
+                else
+                  echo "UPLOAD_SUCCESS=false" >> $GITHUB_ENV
+                fi
+              else
+                echo "❌ No PDF files found in ZIP"
+                echo "UPLOAD_SUCCESS=false" >> $GITHUB_ENV
+              fi
+              
+              # Clean up
+              rm -f "$ZIP_FILENAME"
+            else
+              echo "❌ Failed to download ZIP file"
+              echo "UPLOAD_SUCCESS=false" >> $GITHUB_ENV
+            fi
           else
-            echo "❌ Failed to download PDF"
-            exit 1
+            # Handle single PDF
+            PDF_FILENAME="pdfs/${CLEAN_FILENAME}"
+            
+            echo "Downloading single PDF..."
+            curl -L --progress-bar "$DOWNLOAD_URL" -o "$PDF_FILENAME"
+            
+            if [ -f "$PDF_FILENAME" ]; then
+              echo "✅ PDF downloaded successfully"
+              git add .
+              git commit -m "Add PDF: $CLEAN_FILENAME"
+              git pull --rebase
+              
+              if git push; then
+                echo "UPLOAD_SUCCESS=true" >> $GITHUB_ENV
+                echo "UPLOAD_MESSAGE=Uploaded PDF: $CLEAN_FILENAME" >> $GITHUB_ENV
+                echo "FILE_COUNT=1" >> $GITHUB_ENV
+              else
+                echo "UPLOAD_SUCCESS=false" >> $GITHUB_ENV
+              fi
+            else
+              echo "❌ Failed to download PDF"
+              echo "UPLOAD_SUCCESS=false" >> $GITHUB_ENV
+            fi
           fi
 
-      - name: Send completion notification
+      - name: Send Telegram notification
+        if: env.UPLOAD_SUCCESS == 'true'
         run: |
           CHAT_ID="${{ github.event.client_payload.chat_id }}"
-          FILENAME="${{ github.event.client_payload.file_name }}"
+          ORIGINAL_FILENAME="${{ github.event.client_payload.file_name }}"
+          FOLDER_NAME="${{ github.event.client_payload.folder_name }}"
+          FILE_COUNT="${{ env.FILE_COUNT }}"
+          UPLOAD_MESSAGE="${{ env.UPLOAD_MESSAGE }}"
+          REPO_URL="https://github.com/${{ github.repository }}/tree/main/pdfs"
           
-          if [ -n "$CHAT_ID" ]; then
-            curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-              -d "chat_id=$CHAT_ID" \
-              -d "text=✅ **Upload Complete!**\n\n• File: $FILENAME\n• Status: Successfully uploaded!\n\n📁 View: https://github.com/${{ github.repository }}/tree/main/pdfs" \
-              -d "parse_mode=Markdown"
+          echo "Sending notification to chat ID: $CHAT_ID"
+          
+          if [ "${{ github.event.client_payload.is_zip }}" = "true" ]; then
+            MESSAGE="✅ **ZIP Extraction Complete!**
+
+$UPLOAD_MESSAGE
+• Original ZIP: $ORIGINAL_FILENAME
+• Files extracted: $FILE_COUNT PDFs
+• Repository: ${{ github.repository }}
+
+📁 View: $REPO_URL"
+          else
+            MESSAGE="✅ **Upload Complete!**
+
+$UPLOAD_MESSAGE
+• Repository: ${{ github.repository }}
+
+📁 View: $REPO_URL"
           fi
+
+          # Send notification
+          curl -s -X POST \
+            "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=$CHAT_ID" \
+            -d "text=$MESSAGE" \
+            -d "parse_mode=Markdown" \
+            && echo "✅ Notification sent successfully" \
+            || echo "❌ Failed to send notification"
